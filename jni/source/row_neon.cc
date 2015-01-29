@@ -16,7 +16,8 @@ extern "C" {
 #endif
 
 // This module is for GCC Neon
-#if !defined(LIBYUV_DISABLE_NEON) && defined(__ARM_NEON__)
+#if !defined(LIBYUV_DISABLE_NEON) && defined(__ARM_NEON__) && \
+    !defined(__aarch64__)
 
 // Read 8 Y, 4 U and 4 V from 422
 #define READYUV422                                                             \
@@ -542,7 +543,6 @@ void YToARGBRow_NEON(const uint8* src_y,
                      int width) {
   asm volatile (
     MEMACCESS(3)
-    MEMACCESS(3)
     "vld1.8     {d24}, [%3]                    \n"
     MEMACCESS(4)
     "vld1.8     {d25}, [%4]                    \n"
@@ -845,12 +845,28 @@ void CopyRow_NEON(const uint8* src, uint8* dst, int count) {
   );
 }
 
-// SetRow8 writes 'count' bytes using a 32 bit value repeated.
-void SetRow_NEON(uint8* dst, uint32 v32, int count) {
+// SetRow writes 'count' bytes using an 8 bit value repeated.
+void SetRow_NEON(uint8* dst, uint8 v8, int count) {
+  asm volatile (
+    "vdup.8    q0, %2                          \n"  // duplicate 16 bytes
+  "1:                                          \n"
+    "subs      %1, %1, #16                     \n"  // 16 bytes per loop
+    MEMACCESS(0)
+    "vst1.8    {q0}, [%0]!                     \n"  // store
+    "bgt       1b                              \n"
+  : "+r"(dst),   // %0
+    "+r"(count)  // %1
+  : "r"(v8)      // %2
+  : "cc", "memory", "q0"
+  );
+}
+
+// ARGBSetRow writes 'count' pixels using an 32 bit value repeated.
+void ARGBSetRow_NEON(uint8* dst, uint32 v32, int count) {
   asm volatile (
     "vdup.u32  q0, %2                          \n"  // duplicate 4 ints
-    "1:                                        \n"
-    "subs      %1, %1, #16                     \n"  // 16 bytes per loop
+  "1:                                          \n"
+    "subs      %1, %1, #4                      \n"  // 4 pixels per loop
     MEMACCESS(0)
     "vst1.8    {q0}, [%0]!                     \n"  // store
     "bgt       1b                              \n"
@@ -859,16 +875,6 @@ void SetRow_NEON(uint8* dst, uint32 v32, int count) {
   : "r"(v32)     // %2
   : "cc", "memory", "q0"
   );
-}
-
-// TODO(fbarchard): Make fully assembler
-// SetRow32 writes 'count' words using a 32 bit value repeated.
-void ARGBSetRows_NEON(uint8* dst, uint32 v32, int width,
-                      int dst_stride, int height) {
-  for (int y = 0; y < height; ++y) {
-    SetRow_NEON(dst, v32, width << 2);
-    dst += dst_stride;
-  }
 }
 
 void MirrorRow_NEON(const uint8* src, uint8* dst, int width) {
@@ -1271,30 +1277,6 @@ void UYVYToUVRow_NEON(const uint8* src_uyvy, int stride_uyvy,
     "+r"(pix)           // %4
   :
   : "cc", "memory", "d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7"  // Clobber List
-  );
-}
-
-void HalfRow_NEON(const uint8* src_uv, int src_uv_stride,
-                  uint8* dst_uv, int pix) {
-  asm volatile (
-    // change the stride to row 2 pointer
-    "add        %1, %0                         \n"
-  "1:                                          \n"
-    MEMACCESS(0)
-    "vld1.8     {q0}, [%0]!                    \n"  // load row 1 16 pixels.
-    "subs       %3, %3, #16                    \n"  // 16 processed per loop
-    MEMACCESS(1)
-    "vld1.8     {q1}, [%1]!                    \n"  // load row 2 16 pixels.
-    "vrhadd.u8  q0, q1                         \n"  // average row 1 and 2
-    MEMACCESS(2)
-    "vst1.8     {q0}, [%2]!                    \n"
-    "bgt        1b                             \n"
-  : "+r"(src_uv),         // %0
-    "+r"(src_uv_stride),  // %1
-    "+r"(dst_uv),         // %2
-    "+r"(pix)             // %3
-  :
-  : "cc", "memory", "q0", "q1"  // Clobber List
   );
 }
 
@@ -2833,7 +2815,7 @@ void ARGBColorMatrixRow_NEON(const uint8* src_argb, uint8* dst_argb,
     "vmovl.u8   q8, d16                        \n"  // b (0 .. 255) 16 bit
     "vmovl.u8   q9, d18                        \n"  // g
     "vmovl.u8   q10, d20                       \n"  // r
-    "vmovl.u8   q15, d22                       \n"  // a
+    "vmovl.u8   q11, d22                       \n"  // a
     "vmul.s16   q12, q8, d0[0]                 \n"  // B = B * Matrix B
     "vmul.s16   q13, q8, d1[0]                 \n"  // G = B * Matrix G
     "vmul.s16   q14, q8, d2[0]                 \n"  // R = B * Matrix R
@@ -2854,10 +2836,10 @@ void ARGBColorMatrixRow_NEON(const uint8* src_argb, uint8* dst_argb,
     "vqadd.s16  q13, q13, q5                   \n"  // Accumulate G
     "vqadd.s16  q14, q14, q6                   \n"  // Accumulate R
     "vqadd.s16  q15, q15, q7                   \n"  // Accumulate A
-    "vmul.s16   q4, q15, d0[3]                 \n"  // B += A * Matrix B
-    "vmul.s16   q5, q15, d1[3]                 \n"  // G += A * Matrix G
-    "vmul.s16   q6, q15, d2[3]                 \n"  // R += A * Matrix R
-    "vmul.s16   q7, q15, d3[3]                 \n"  // A += A * Matrix A
+    "vmul.s16   q4, q11, d0[3]                 \n"  // B += A * Matrix B
+    "vmul.s16   q5, q11, d1[3]                 \n"  // G += A * Matrix G
+    "vmul.s16   q6, q11, d2[3]                 \n"  // R += A * Matrix R
+    "vmul.s16   q7, q11, d3[3]                 \n"  // A += A * Matrix A
     "vqadd.s16  q12, q12, q4                   \n"  // Accumulate B
     "vqadd.s16  q13, q13, q5                   \n"  // Accumulate G
     "vqadd.s16  q14, q14, q6                   \n"  // Accumulate R
@@ -2873,7 +2855,7 @@ void ARGBColorMatrixRow_NEON(const uint8* src_argb, uint8* dst_argb,
     "+r"(dst_argb),   // %1
     "+r"(width)       // %2
   : "r"(matrix_argb)  // %3
-  : "cc", "memory", "q0", "q1", "q2", "q3", "q4", "q5", "q6", "q7", "q8", "q9",
+  : "cc", "memory", "q0", "q1", "q2", "q4", "q5", "q6", "q7", "q8", "q9",
     "q10", "q11", "q12", "q13", "q14", "q15"
   );
 }
@@ -3141,7 +3123,7 @@ void SobelYRow_NEON(const uint8* src_y0, const uint8* src_y1,
   : "cc", "memory", "q0", "q1"  // Clobber List
   );
 }
-#endif  // __ARM_NEON__
+#endif  // defined(__ARM_NEON__) && !defined(__aarch64__)
 
 #ifdef __cplusplus
 }  // extern "C"

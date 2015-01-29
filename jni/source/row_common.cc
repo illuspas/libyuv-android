@@ -385,6 +385,28 @@ void NAME ## ToUVJRow_C(const uint8* src_rgb0, int src_stride_rgb,             \
 MAKEROWYJ(ARGB, 2, 1, 0, 4)
 #undef MAKEROWYJ
 
+void ARGBToUVJ422Row_C(const uint8* src_argb,
+                       uint8* dst_u, uint8* dst_v, int width) {
+  int x;
+  for (x = 0; x < width - 1; x += 2) {
+    uint8 ab = (src_argb[0] + src_argb[4]) >> 1;
+    uint8 ag = (src_argb[1] + src_argb[5]) >> 1;
+    uint8 ar = (src_argb[2] + src_argb[6]) >> 1;
+    dst_u[0] = RGBToUJ(ar, ag, ab);
+    dst_v[0] = RGBToVJ(ar, ag, ab);
+    src_argb += 8;
+    dst_u += 1;
+    dst_v += 1;
+  }
+  if (width & 1) {
+    uint8 ab = src_argb[0];
+    uint8 ag = src_argb[1];
+    uint8 ar = src_argb[2];
+    dst_u[0] = RGBToUJ(ar, ag, ab);
+    dst_v[0] = RGBToVJ(ar, ag, ab);
+  }
+}
+
 void RGB565ToYRow_C(const uint8* src_rgb565, uint8* dst_y, int width) {
   int x;
   for (x = 0; x < width; ++x) {
@@ -938,33 +960,51 @@ void I400ToARGBRow_C(const uint8* src_y, uint8* dst_argb, int width) {
   }
 }
 
+// YUV to RGB conversion constants.
+// Y contribution to R,G,B.  Scale and bias.
+#define YG 19071 /* round(1.164 * 64 * 256) */
+#define YGB 1197 /* 1.164 * 64 * 16 - adjusted for even error distribution */
+
+// U and V contributions to R,G,B.
+#define UB -128 /* -min(128, round(2.018 * 64)) */
+#define UG 25 /* -round(-0.391 * 64) */
+#define VG 52 /* -round(-0.813 * 64) */
+#define VR -102 /* -round(1.596 * 64) */
+
+// Bias values to subtract 16 from Y and 128 from U and V.
+#define BB (UB * 128            - YGB)
+#define BG (UG * 128 + VG * 128 - YGB)
+#define BR (           VR * 128 - YGB)
+
 // C reference code that mimics the YUV assembly.
-
-#define YG 74 /* (int8)(1.164 * 64 + 0.5) */
-
-#define UB 127 /* min(63,(int8)(2.018 * 64)) */
-#define UG -25 /* (int8)(-0.391 * 64 - 0.5) */
-#define UR 0
-
-#define VB 0
-#define VG -52 /* (int8)(-0.813 * 64 - 0.5) */
-#define VR 102 /* (int8)(1.596 * 64 + 0.5) */
-
-// Bias
-#define BB UB * 128 + VB * 128
-#define BG UG * 128 + VG * 128
-#define BR UR * 128 + VR * 128
-
 static __inline void YuvPixel(uint8 y, uint8 u, uint8 v,
                               uint8* b, uint8* g, uint8* r) {
-  int32 y1 = ((int32)(y) - 16) * YG;
-  *b = Clamp((int32)((u * UB + v * VB) - (BB) + y1) >> 6);
-  *g = Clamp((int32)((u * UG + v * VG) - (BG) + y1) >> 6);
-  *r = Clamp((int32)((u * UR + v * VR) - (BR) + y1) >> 6);
+  uint32 y1 = (uint32)(y * 0x0101 * YG) >> 16;
+  *b = Clamp((int32)(BB - (         u * UB) + y1) >> 6);
+  *g = Clamp((int32)(BG - (v * VG + u * UG) + y1) >> 6);
+  *r = Clamp((int32)(BR - (v * VR         ) + y1) >> 6);
 }
 
+// C reference code that mimics the YUV assembly.
+static __inline void YPixel(uint8 y, uint8* b, uint8* g, uint8* r) {
+  uint32 y1 = (uint32)(y * 0x0101 * YG) >> 16;
+  *b = Clamp((int32)(y1 - YGB) >> 6);
+  *g = Clamp((int32)(y1 - YGB) >> 6);
+  *r = Clamp((int32)(y1 - YGB) >> 6);
+}
+
+#undef YG
+#undef YGB
+#undef UB
+#undef UG
+#undef VG
+#undef VR
+#undef BB
+#undef BG
+#undef BR
+
 #if !defined(LIBYUV_DISABLE_NEON) && \
-    (defined(__ARM_NEON__) || defined(LIBYUV_NEON))
+    (defined(__ARM_NEON__) || defined(__aarch64__) || defined(LIBYUV_NEON))
 // C mimic assembly.
 // TODO(fbarchard): Remove subsampling from Neon.
 void I444ToARGBRow_C(const uint8* src_y,
@@ -1008,6 +1048,7 @@ void I444ToARGBRow_C(const uint8* src_y,
   }
 }
 #endif
+
 // Also used for 420
 void I422ToARGBRow_C(const uint8* src_y,
                      const uint8* src_u,
@@ -1030,6 +1071,59 @@ void I422ToARGBRow_C(const uint8* src_y,
   if (width & 1) {
     YuvPixel(src_y[0], src_u[0], src_v[0],
              rgb_buf + 0, rgb_buf + 1, rgb_buf + 2);
+    rgb_buf[3] = 255;
+  }
+}
+
+// C reference code that mimics the YUV assembly.
+// *  R = Y                + 1.40200 * Cr
+// *  G = Y - 0.34414 * Cb - 0.71414 * Cr
+// *  B = Y + 1.77200 * Cb
+
+#define YGJ 64 /* (int8)round(1.000 * 64) */
+
+#define UBJ 113 /* (int8)round(1.772 * 64) */
+#define UGJ -22 /* (int8)round(-0.34414 * 64) */
+#define URJ 0
+
+#define VBJ 0
+#define VGJ -46 /* (int8)round(-0.71414 * 64) */
+#define VRJ 90 /* (int8)round(1.402 * 64) */
+
+// Bias
+#define BBJ (UBJ * 128 + VBJ * 128)
+#define BGJ (UGJ * 128 + VGJ * 128)
+#define BRJ (URJ * 128 + VRJ * 128)
+
+static __inline void YuvJPixel(uint8 y, uint8 u, uint8 v,
+                              uint8* b, uint8* g, uint8* r) {
+  uint32 y1 = (uint32)(y * YGJ);
+  *b = Clamp((int32)(u * UBJ + v * VBJ + y1 - BBJ) >> 6);
+  *g = Clamp((int32)(u * UGJ + v * VGJ + y1 - BGJ) >> 6);
+  *r = Clamp((int32)(u * URJ + v * VRJ + y1 - BRJ) >> 6);
+}
+
+void J422ToARGBRow_C(const uint8* src_y,
+                     const uint8* src_u,
+                     const uint8* src_v,
+                     uint8* rgb_buf,
+                     int width) {
+  int x;
+  for (x = 0; x < width - 1; x += 2) {
+    YuvJPixel(src_y[0], src_u[0], src_v[0],
+              rgb_buf + 0, rgb_buf + 1, rgb_buf + 2);
+    rgb_buf[3] = 255;
+    YuvJPixel(src_y[1], src_u[0], src_v[0],
+              rgb_buf + 4, rgb_buf + 5, rgb_buf + 6);
+    rgb_buf[7] = 255;
+    src_y += 2;
+    src_u += 1;
+    src_v += 1;
+    rgb_buf += 8;  // Advance 2 pixels.
+  }
+  if (width & 1) {
+    YuvJPixel(src_y[0], src_u[0], src_v[0],
+              rgb_buf + 0, rgb_buf + 1, rgb_buf + 2);
     rgb_buf[3] = 255;
   }
 }
@@ -1470,18 +1564,15 @@ void I422ToRGBARow_C(const uint8* src_y,
 void YToARGBRow_C(const uint8* src_y, uint8* rgb_buf, int width) {
   int x;
   for (x = 0; x < width - 1; x += 2) {
-    YuvPixel(src_y[0], 128, 128,
-             rgb_buf + 0, rgb_buf + 1, rgb_buf + 2);
+    YPixel(src_y[0], rgb_buf + 0, rgb_buf + 1, rgb_buf + 2);
     rgb_buf[3] = 255;
-    YuvPixel(src_y[1], 128, 128,
-             rgb_buf + 4, rgb_buf + 5, rgb_buf + 6);
+    YPixel(src_y[1], rgb_buf + 4, rgb_buf + 5, rgb_buf + 6);
     rgb_buf[7] = 255;
     src_y += 2;
     rgb_buf += 8;  // Advance 2 pixels.
   }
   if (width & 1) {
-    YuvPixel(src_y[0], 128, 128,
-             rgb_buf + 0, rgb_buf + 1, rgb_buf + 2);
+    YPixel(src_y[0], rgb_buf + 0, rgb_buf + 1, rgb_buf + 2);
     rgb_buf[3] = 255;
   }
 }
@@ -1569,28 +1660,15 @@ void CopyRow_16_C(const uint16* src, uint16* dst, int count) {
   memcpy(dst, src, count * 2);
 }
 
-void SetRow_C(uint8* dst, uint32 v8, int count) {
-#ifdef _MSC_VER
-  // VC will generate rep stosb.
-  int x;
-  for (x = 0; x < count; ++x) {
-    dst[x] = v8;
-  }
-#else
-  memset(dst, v8, count);
-#endif
+void SetRow_C(uint8* dst, uint8 v8, int width) {
+  memset(dst, v8, width);
 }
 
-void ARGBSetRows_C(uint8* dst, uint32 v32, int width,
-                 int dst_stride, int height) {
-  int y;
-  for (y = 0; y < height; ++y) {
-    uint32* d = (uint32*)(dst);
-    int x;
-    for (x = 0; x < width; ++x) {
-      d[x] = v32;
-    }
-    dst += dst_stride;
+void ARGBSetRow_C(uint8* dst_argb, uint32 v32, int width) {
+  uint32* d = (uint32*)(dst_argb);
+  int x;
+  for (x = 0; x < width; ++x) {
+    d[x] = v32;
   }
 }
 
@@ -1885,17 +1963,17 @@ void ARGBAffineRow_C(const uint8* src_argb, int src_argb_stride,
   }
 }
 
-// Blend 2 rows into 1 for conversions such as I422ToI420.
-void HalfRow_C(const uint8* src_uv, int src_uv_stride,
-               uint8* dst_uv, int pix) {
+// Blend 2 rows into 1.
+static void HalfRow_C(const uint8* src_uv, int src_uv_stride,
+                      uint8* dst_uv, int pix) {
   int x;
   for (x = 0; x < pix; ++x) {
     dst_uv[x] = (src_uv[x] + src_uv[src_uv_stride + x] + 1) >> 1;
   }
 }
 
-void HalfRow_16_C(const uint16* src_uv, int src_uv_stride,
-                  uint16* dst_uv, int pix) {
+static void HalfRow_16_C(const uint16* src_uv, int src_uv_stride,
+                         uint16* dst_uv, int pix) {
   int x;
   for (x = 0; x < pix; ++x) {
     dst_uv[x] = (src_uv[x] + src_uv[src_uv_stride + x] + 1) >> 1;
@@ -2137,19 +2215,6 @@ void YUY2ToARGBRow_SSSE3(const uint8* src_yuy2,
   free_aligned_buffer_64(row_y);
 }
 
-void YUY2ToARGBRow_Unaligned_SSSE3(const uint8* src_yuy2,
-                                   uint8* dst_argb,
-                                   int width) {
-  // Allocate a rows of yuv.
-  align_buffer_64(row_y, ((width + 63) & ~63) * 2);
-  uint8* row_u = row_y + ((width + 63) & ~63);
-  uint8* row_v = row_u + ((width + 63) & ~63) / 2;
-  YUY2ToUV422Row_Unaligned_SSE2(src_yuy2, row_u, row_v, width);
-  YUY2ToYRow_Unaligned_SSE2(src_yuy2, row_y, width);
-  I422ToARGBRow_Unaligned_SSSE3(row_y, row_u, row_v, dst_argb, width);
-  free_aligned_buffer_64(row_y);
-}
-
 void UYVYToARGBRow_SSSE3(const uint8* src_uyvy,
                          uint8* dst_argb,
                          int width) {
@@ -2160,19 +2225,6 @@ void UYVYToARGBRow_SSSE3(const uint8* src_uyvy,
   UYVYToUV422Row_SSE2(src_uyvy, row_u, row_v, width);
   UYVYToYRow_SSE2(src_uyvy, row_y, width);
   I422ToARGBRow_SSSE3(row_y, row_u, row_v, dst_argb, width);
-  free_aligned_buffer_64(row_y);
-}
-
-void UYVYToARGBRow_Unaligned_SSSE3(const uint8* src_uyvy,
-                                   uint8* dst_argb,
-                                   int width) {
-  // Allocate a rows of yuv.
-  align_buffer_64(row_y, ((width + 63) & ~63) * 2);
-  uint8* row_u = row_y + ((width + 63) & ~63);
-  uint8* row_v = row_u + ((width + 63) & ~63) / 2;
-  UYVYToUV422Row_Unaligned_SSE2(src_uyvy, row_u, row_v, width);
-  UYVYToYRow_Unaligned_SSE2(src_uyvy, row_y, width);
-  I422ToARGBRow_Unaligned_SSSE3(row_y, row_u, row_v, dst_argb, width);
   free_aligned_buffer_64(row_y);
 }
 

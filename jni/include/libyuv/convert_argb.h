@@ -123,6 +123,22 @@ int UYVYToARGB(const uint8* src_uyvy, int src_stride_uyvy,
                uint8* dst_argb, int dst_stride_argb,
                int width, int height);
 
+// Convert J420 to ARGB.
+LIBYUV_API
+int J420ToARGB(const uint8* src_y, int src_stride_y,
+               const uint8* src_u, int src_stride_u,
+               const uint8* src_v, int src_stride_v,
+               uint8* dst_argb, int dst_stride_argb,
+               int width, int height);
+
+// Convert J422 to ARGB.
+LIBYUV_API
+int J422ToARGB(const uint8* src_y, int src_stride_y,
+               const uint8* src_u, int src_stride_u,
+               const uint8* src_v, int src_stride_v,
+               uint8* dst_argb, int dst_stride_argb,
+               int width, int height);
+
 // BGRA little endian (argb in memory) to ARGB.
 LIBYUV_API
 int BGRAToARGB(const uint8* src_frame, int src_stride_frame,
