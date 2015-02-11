@@ -43,13 +43,11 @@ common_SRC_FILES := \
 	source/video_common.cc
 
 common_CFLAGS := -fexceptions
+common_LDFLAGS :=
 
 ifeq ($(TARGET_ARCH_ABI), armeabi-v7a)
-    LOCAL_ARM_NEON  := true
-endif
-
-ifeq ($(TARGET_ARCH_ABI), arm64-v8a)
-    LOCAL_ARM_NEON  := true
+	common_CFLAGS += -march=armv7-a -mfloat-abi=softfp -mfpu=neon
+	common_LDFLAGS += -Wl,--fix-cortex-a8
 endif
 
 
