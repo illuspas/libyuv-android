@@ -9,6 +9,8 @@
  */
 
 #include "libyuv/basic_types.h"
+
+#include "libyuv/compare_row.h"
 #include "libyuv/row.h"
 
 #ifdef __cplusplus
@@ -26,13 +28,12 @@ uint32 SumSquareError_NEON(const uint8* src_a, const uint8* src_b, int count) {
     "eor        v17.16b, v17.16b, v17.16b      \n"
     "eor        v19.16b, v19.16b, v19.16b      \n"
 
-    ".p2align  2                               \n"
   "1:                                          \n"
     MEMACCESS(0)
     "ld1        {v0.16b}, [%0], #16            \n"
     MEMACCESS(1)
     "ld1        {v1.16b}, [%1], #16            \n"
-    "subs       %2, %2, #16                    \n"
+    "subs       %w2, %w2, #16                  \n"
     "usubl      v2.8h, v0.8b, v1.8b            \n"
     "usubl2     v3.8h, v0.16b, v1.16b          \n"
     "smlal      v16.4s, v2.4h, v2.4h           \n"
