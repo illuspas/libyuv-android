@@ -10,8 +10,11 @@
 
 #include "libyuv/row.h"
 
-#if !defined(LIBYUV_DISABLE_X86) && defined(_M_X64) && \
-    defined(_MSC_VER) && !defined(__clang__)
+// This module is for Visual C 32/64 bit and clangcl 32 bit
+#if !defined(LIBYUV_DISABLE_X86) && defined(_MSC_VER) && \
+    (defined(_M_IX86) || (defined(_M_X64) && !defined(__clang__)))
+
+#if defined(_M_X64)
 #include <emmintrin.h>
 #include <tmmintrin.h>  // For _mm_maddubs_epi16
 #endif
@@ -20,10 +23,6 @@
 namespace libyuv {
 extern "C" {
 #endif
-
-// This module is for Visual C 32/64 bit and clangcl 32 bit
-#if !defined(LIBYUV_DISABLE_X86) && \
-    (defined(_M_IX86) || (defined(_M_X64) && !defined(__clang__)))
 
 // 64 bit
 #if defined(_M_X64)
@@ -1970,21 +1969,6 @@ void RGBAToUVRow_SSSE3(const uint8* src_argb0, int src_stride_argb,
     __asm lea        ebp, [ebp + 16]                                           \
   }
 
-// Read 4 UV from 411, upsample to 16 UV.
-#define READYUV411_AVX2 __asm {                                                \
-    __asm vmovd      xmm0, dword ptr [esi]        /* U */                      \
-    __asm vmovd      xmm1, dword ptr [esi + edi]  /* V */                      \
-    __asm lea        esi,  [esi + 4]                                           \
-    __asm vpunpcklbw ymm0, ymm0, ymm1             /* UV */                     \
-    __asm vpunpcklwd ymm0, ymm0, ymm0             /* UVUV (upsample) */        \
-    __asm vpermq     ymm0, ymm0, 0xd8                                          \
-    __asm vpunpckldq ymm0, ymm0, ymm0             /* UVUVUVUV (upsample) */    \
-    __asm vmovdqu    xmm4, [eax]                  /* Y */                      \
-    __asm vpermq     ymm4, ymm4, 0xd8                                          \
-    __asm vpunpcklbw ymm4, ymm4, ymm4                                          \
-    __asm lea        eax, [eax + 16]                                           \
-  }
-
 // Read 8 UV from NV12, upsample to 16 UV.
 #define READNV12_AVX2 __asm {                                                  \
     __asm vmovdqu    xmm0, [esi]                  /* UV */                     \
@@ -2199,46 +2183,6 @@ void I444ToARGBRow_AVX2(const uint8* y_buf,
 }
 #endif  // HAS_I444TOARGBROW_AVX2
 
-#ifdef HAS_I411TOARGBROW_AVX2
-// 16 pixels
-// 4 UV values upsampled to 16 UV, mixed with 16 Y producing 16 ARGB (64 bytes).
-__declspec(naked)
-void I411ToARGBRow_AVX2(const uint8* y_buf,
-                        const uint8* u_buf,
-                        const uint8* v_buf,
-                        uint8* dst_argb,
-                        const struct YuvConstants* yuvconstants,
-                        int width) {
-  __asm {
-    push       esi
-    push       edi
-    push       ebx
-    mov        eax, [esp + 12 + 4]   // Y
-    mov        esi, [esp + 12 + 8]   // U
-    mov        edi, [esp + 12 + 12]  // V
-    mov        edx, [esp + 12 + 16]  // abgr
-    mov        ebx, [esp + 12 + 20]  // yuvconstants
-    mov        ecx, [esp + 12 + 24]  // width
-    sub        edi, esi
-    vpcmpeqb   ymm5, ymm5, ymm5     // generate 0xffffffffffffffff for alpha
-
- convertloop:
-    READYUV411_AVX2
-    YUVTORGB_AVX2(ebx)
-    STOREARGB_AVX2
-
-    sub        ecx, 16
-    jg         convertloop
-
-    pop        ebx
-    pop        edi
-    pop        esi
-    vzeroupper
-    ret
-  }
-}
-#endif  // HAS_I411TOARGBROW_AVX2
-
 #ifdef HAS_NV12TOARGBROW_AVX2
 // 16 pixels.
 // 8 UV values upsampled to 16 UV, mixed with 16 Y producing 16 ARGB (64 bytes).
@@ -2450,24 +2394,6 @@ void I422ToRGBARow_AVX2(const uint8* y_buf,
     __asm lea        eax, [eax + 8]                                            \
     __asm movq       xmm5, qword ptr [ebp]   /* A */                           \
     __asm lea        ebp, [ebp + 8]                                            \
-  }
-
-// Read 2 UV from 411, upsample to 8 UV.
-// drmemory fails with memory fault if pinsrw used. libyuv bug: 525
-//  __asm pinsrw     xmm0, [esi], 0        /* U */
-//  __asm pinsrw     xmm1, [esi + edi], 0  /* V */
-#define READYUV411_EBX __asm {                                                 \
-    __asm movzx      ebx, word ptr [esi]        /* U */                        \
-    __asm movd       xmm0, ebx                                                 \
-    __asm movzx      ebx, word ptr [esi + edi]  /* V */                        \
-    __asm movd       xmm1, ebx                                                 \
-    __asm lea        esi,  [esi + 2]                                           \
-    __asm punpcklbw  xmm0, xmm1            /* UV */                            \
-    __asm punpcklwd  xmm0, xmm0            /* UVUV (upsample) */               \
-    __asm punpckldq  xmm0, xmm0            /* UVUVUVUV (upsample) */           \
-    __asm movq       xmm4, qword ptr [eax]                                     \
-    __asm punpcklbw  xmm4, xmm4                                                \
-    __asm lea        eax, [eax + 8]                                            \
   }
 
 // Read 4 UV from NV12, upsample to 8 UV.
@@ -2807,46 +2733,6 @@ void I422AlphaToARGBRow_SSSE3(const uint8* y_buf,
  convertloop:
     READYUVA422
     YUVTORGB(ebx)
-    STOREARGB
-
-    sub        ecx, 8
-    jg         convertloop
-
-    pop        ebp
-    pop        ebx
-    pop        edi
-    pop        esi
-    ret
-  }
-}
-
-// 8 pixels.
-// 2 UV values upsampled to 8 UV, mixed with 8 Y producing 8 ARGB (32 bytes).
-// Similar to I420 but duplicate UV once more.
-__declspec(naked)
-void I411ToARGBRow_SSSE3(const uint8* y_buf,
-                         const uint8* u_buf,
-                         const uint8* v_buf,
-                         uint8* dst_argb,
-                         const struct YuvConstants* yuvconstants,
-                         int width) {
-  __asm {
-    push       esi
-    push       edi
-    push       ebx
-    push       ebp
-    mov        eax, [esp + 16 + 4]   // Y
-    mov        esi, [esp + 16 + 8]   // U
-    mov        edi, [esp + 16 + 12]  // V
-    mov        edx, [esp + 16 + 16]  // abgr
-    mov        ebp, [esp + 16 + 20]  // yuvconstants
-    mov        ecx, [esp + 16 + 24]  // width
-    sub        edi, esi
-    pcmpeqb    xmm5, xmm5            // generate 0xffffffff for alpha
-
- convertloop:
-    READYUV411_EBX
-    YUVTORGB(ebp)
     STOREARGB
 
     sub        ecx, 8
@@ -3531,6 +3417,68 @@ void ARGBCopyAlphaRow_AVX2(const uint8* src, uint8* dst, int width) {
   }
 }
 #endif  // HAS_ARGBCOPYALPHAROW_AVX2
+
+#ifdef HAS_ARGBEXTRACTALPHAROW_SSE2
+// width in pixels
+__declspec(naked)
+void ARGBExtractAlphaRow_SSE2(const uint8* src_argb, uint8* dst_a, int width) {
+  __asm {
+    mov        eax, [esp + 4]   // src_argb
+    mov        edx, [esp + 8]   // dst_a
+    mov        ecx, [esp + 12]  // width
+
+  extractloop:
+    movdqu     xmm0, [eax]
+    movdqu     xmm1, [eax + 16]
+    lea        eax, [eax + 32]
+    psrld      xmm0, 24
+    psrld      xmm1, 24
+    packssdw   xmm0, xmm1
+    packuswb   xmm0, xmm0
+    movq       qword ptr [edx], xmm0
+    lea        edx, [edx + 8]
+    sub        ecx, 8
+    jg         extractloop
+
+    ret
+  }
+}
+#endif  // HAS_ARGBEXTRACTALPHAROW_SSE2
+
+#ifdef HAS_ARGBEXTRACTALPHAROW_AVX2
+// width in pixels
+__declspec(naked)
+void ARGBExtractAlphaRow_AVX2(const uint8* src_argb, uint8* dst_a, int width) {
+  __asm {
+    mov        eax, [esp + 4]   // src_argb
+    mov        edx, [esp + 8]   // dst_a
+    mov        ecx, [esp + 12]  // width
+    vmovdqa    ymm4, ymmword ptr kPermdARGBToY_AVX
+
+  extractloop:
+    vmovdqu    ymm0, [eax]
+    vmovdqu    ymm1, [eax + 32]
+    vpsrld     ymm0, ymm0, 24
+    vpsrld     ymm1, ymm1, 24
+    vmovdqu    ymm2, [eax + 64]
+    vmovdqu    ymm3, [eax + 96]
+    lea        eax, [eax + 128]
+    vpackssdw  ymm0, ymm0, ymm1  // mutates
+    vpsrld     ymm2, ymm2, 24
+    vpsrld     ymm3, ymm3, 24
+    vpackssdw  ymm2, ymm2, ymm3  // mutates
+    vpackuswb  ymm0, ymm0, ymm2  // mutates
+    vpermd     ymm0, ymm4, ymm0  // unmutate
+    vmovdqu    [edx], ymm0
+    lea        edx, [edx + 32]
+    sub        ecx, 32
+    jg         extractloop
+
+    vzeroupper
+    ret
+  }
+}
+#endif  // HAS_ARGBEXTRACTALPHAROW_AVX2
 
 #ifdef HAS_ARGBCOPYYTOALPHAROW_SSE2
 // width in pixels
@@ -5248,6 +5196,7 @@ void SobelXYRow_SSE2(const uint8* src_sobelx, const uint8* src_sobely,
 // dst points to pixel to store result to.
 // count is number of averaged pixels to produce.
 // Does 4 pixels at a time.
+// This function requires alignment on accumulation buffer pointers.
 void CumulativeSumToAverageRow_SSE2(const int32* topleft, const int32* botleft,
                                     int width, int area, uint8* dst,
                                     int count) {
@@ -6068,6 +6017,109 @@ void ARGBPolynomialRow_AVX2(const uint8* src_argb,
 }
 #endif  // HAS_ARGBPOLYNOMIALROW_AVX2
 
+#ifdef HAS_HALFFLOATROW_SSE2
+static float kExpBias = 1.9259299444e-34f;
+__declspec(naked)
+void HalfFloatRow_SSE2(const uint16* src, uint16* dst, float scale, int width) {
+  __asm {
+    mov        eax, [esp + 4]      /* src */
+    mov        edx, [esp + 8]      /* dst */
+    movd       xmm4, dword ptr [esp + 12]    /* scale */
+    mov        ecx, [esp + 16]     /* width */
+    mulss      xmm4, kExpBias
+    pshufd     xmm4, xmm4, 0
+    pxor       xmm5, xmm5
+
+    // 8 pixel loop.
+ convertloop:
+    movdqu      xmm2, xmmword ptr [eax]  // 8 shorts
+    lea         eax, [eax + 16]
+    movdqa      xmm3, xmm2
+    punpcklwd   xmm2, xmm5
+    cvtdq2ps    xmm2, xmm2        // convert 8 ints to floats
+    punpckhwd   xmm3, xmm5
+    cvtdq2ps    xmm3, xmm3
+    mulps       xmm2, xmm4
+    mulps       xmm3, xmm4
+    psrld       xmm2, 13
+    psrld       xmm3, 13
+    packssdw    xmm2, xmm3
+    movdqu      [edx], xmm2
+    lea         edx, [edx + 16]
+    sub         ecx, 8
+    jg          convertloop
+    ret
+  }
+}
+#endif  // HAS_HALFFLOATROW_SSE2
+
+#ifdef HAS_HALFFLOATROW_AVX2
+__declspec(naked)
+void HalfFloatRow_AVX2(const uint16* src, uint16* dst, float scale, int width) {
+  __asm {
+    mov        eax, [esp + 4]      /* src */
+    mov        edx, [esp + 8]      /* dst */
+    movd       xmm4, dword ptr [esp + 12]  /* scale */
+    mov        ecx, [esp + 16]     /* width */
+
+    vmulss     xmm4, xmm4, kExpBias
+    vbroadcastss ymm4, xmm4
+    vpxor      ymm5, ymm5, ymm5
+
+    // 16 pixel loop.
+ convertloop:
+    vmovdqu     ymm2, [eax]  // 16 shorts
+    lea         eax, [eax + 32]
+    vpunpckhwd  ymm3, ymm2, ymm5 // convert 16 shorts to 16 ints
+    vpunpcklwd  ymm2, ymm2, ymm5
+    vcvtdq2ps   ymm3, ymm3  // convert 16 ints to floats
+    vcvtdq2ps   ymm2, ymm2
+    vmulps      ymm3, ymm3, ymm4  // scale to adjust exponent for 5 bit range.
+    vmulps      ymm2, ymm2, ymm4
+    vpsrld      ymm3, ymm3, 13  // float convert to 8 half floats truncate
+    vpsrld      ymm2, ymm2, 13
+    vpackssdw   ymm2, ymm2, ymm3
+    vmovdqu     [edx], ymm2
+    lea         edx, [edx + 32]
+    sub         ecx, 16
+    jg          convertloop
+    vzeroupper
+    ret
+  }
+}
+#endif  // HAS_HALFFLOATROW_AVX2
+
+#ifdef HAS_HALFFLOATROW_F16C
+__declspec(naked)
+void HalfFloatRow_F16C(const uint16* src, uint16* dst, float scale, int width) {
+  __asm {
+    mov        eax, [esp + 4]      /* src */
+    mov        edx, [esp + 8]      /* dst */
+    vbroadcastss ymm4, [esp + 12]  /* scale */
+    mov        ecx, [esp + 16]     /* width */
+
+    // 16 pixel loop.
+ convertloop:
+    vpmovzxwd   ymm2, xmmword ptr [eax]  // 8 shorts -> 8 ints
+    vpmovzxwd   ymm3, xmmword ptr [eax + 16]  // 8 more shorts
+    lea         eax, [eax + 32]
+    vcvtdq2ps   ymm2, ymm2        // convert 8 ints to floats
+    vcvtdq2ps   ymm3, ymm3
+    vmulps      ymm2, ymm2, ymm4  // scale to normalized range 0 to 1
+    vmulps      ymm3, ymm3, ymm4
+    vcvtps2ph   xmm2, ymm2, 3     // float convert to 8 half floats truncate
+    vcvtps2ph   xmm3, ymm3, 3
+    vmovdqu     [edx], xmm2
+    vmovdqu     [edx + 16], xmm3
+    lea         edx, [edx + 32]
+    sub         ecx, 16
+    jg          convertloop
+    vzeroupper
+    ret
+  }
+}
+#endif  // HAS_HALFFLOATROW_F16C
+
 #ifdef HAS_ARGBCOLORTABLEROW_X86
 // Tranform ARGB pixels with color table.
 __declspec(naked)
@@ -6233,9 +6285,10 @@ void ARGBLumaColorTableRow_SSSE3(const uint8* src_argb, uint8* dst_argb,
 #endif  // HAS_ARGBLUMACOLORTABLEROW_SSSE3
 
 #endif  // defined(_M_X64)
-#endif  // !defined(LIBYUV_DISABLE_X86) && (defined(_M_IX86) || defined(_M_X64))
 
 #ifdef __cplusplus
 }  // extern "C"
 }  // namespace libyuv
 #endif
+
+#endif  // !defined(LIBYUV_DISABLE_X86) && (defined(_M_IX86) || defined(_M_X64))

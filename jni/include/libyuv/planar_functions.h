@@ -8,7 +8,7 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
-#ifndef INCLUDE_LIBYUV_PLANAR_FUNCTIONS_H_  // NOLINT
+#ifndef INCLUDE_LIBYUV_PLANAR_FUNCTIONS_H_
 #define INCLUDE_LIBYUV_PLANAR_FUNCTIONS_H_
 
 #include "libyuv/basic_types.h"
@@ -38,6 +38,20 @@ LIBYUV_API
 void SetPlane(uint8* dst_y, int dst_stride_y,
               int width, int height,
               uint32 value);
+
+// Split interleaved UV plane into separate U and V planes.
+LIBYUV_API
+void SplitUVPlane(const uint8* src_uv, int src_stride_uv,
+                  uint8* dst_u, int dst_stride_u,
+                  uint8* dst_v, int dst_stride_v,
+                  int width, int height);
+
+// Merge separate U and V planes into one interleaved UV plane.
+LIBYUV_API
+void MergeUVPlane(const uint8* src_u, int src_stride_u,
+                  const uint8* src_v, int src_stride_v,
+                  uint8* dst_uv, int dst_stride_uv,
+                  int width, int height);
 
 // Copy I400.  Supports inverting.
 LIBYUV_API
@@ -96,6 +110,11 @@ int UYVYToNV12(const uint8* src_uyvy, int src_stride_uyvy,
                uint8* dst_y, int dst_stride_y,
                uint8* dst_uv, int dst_stride_uv,
                int width, int height);
+
+LIBYUV_API
+int YUY2ToY(const uint8* src_yuy2, int src_stride_yuy2,
+             uint8* dst_y, int dst_stride_y,
+             int width, int height);
 
 // Convert I420 to I400. (calls CopyPlane ignoring u/v).
 LIBYUV_API
@@ -267,6 +286,14 @@ int ARGBPolynomial(const uint8* src_argb, int src_stride_argb,
                    const float* poly,
                    int width, int height);
 
+// Convert plane of 16 bit shorts to half floats.
+// Source values are multiplied by scale before storing as half float.
+LIBYUV_API
+int HalfFloatPlane(const uint16* src_y, int src_stride_y,
+                   uint16* dst_y, int dst_stride_y,
+                   float scale,
+                   int width, int height);
+
 // Quantize a rectangle of ARGB. Alpha unaffected.
 // scale is a 16 bit fractional fixed point scaler between 0 and 65535.
 // interval_size should be a value between 1 and 255.
@@ -287,6 +314,12 @@ LIBYUV_API
 int ARGBCopyAlpha(const uint8* src_argb, int src_stride_argb,
                   uint8* dst_argb, int dst_stride_argb,
                   int width, int height);
+
+// Extract the alpha channel from ARGB.
+LIBYUV_API
+int ARGBExtractAlpha(const uint8* src_argb, int src_stride_argb,
+                     uint8* dst_a, int dst_stride_a,
+                     int width, int height);
 
 // Copy Y channel to Alpha of ARGB.
 LIBYUV_API
@@ -498,4 +531,4 @@ int ARGBSobelXY(const uint8* src_argb, int src_stride_argb,
 }  // namespace libyuv
 #endif
 
-#endif  // INCLUDE_LIBYUV_PLANAR_FUNCTIONS_H_  NOLINT
+#endif  // INCLUDE_LIBYUV_PLANAR_FUNCTIONS_H_

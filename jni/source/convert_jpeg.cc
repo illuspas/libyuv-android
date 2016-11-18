@@ -9,6 +9,7 @@
  */
 
 #include "libyuv/convert.h"
+#include "libyuv/convert_argb.h"
 
 #ifdef HAVE_JPEG
 #include "libyuv/mjpeg_decoder.h"
@@ -73,24 +74,6 @@ static void JpegI444ToI420(void* opaque,
                            int rows) {
   I420Buffers* dest = (I420Buffers*)(opaque);
   I444ToI420(data[0], strides[0],
-             data[1], strides[1],
-             data[2], strides[2],
-             dest->y, dest->y_stride,
-             dest->u, dest->u_stride,
-             dest->v, dest->v_stride,
-             dest->w, rows);
-  dest->y += rows * dest->y_stride;
-  dest->u += ((rows + 1) >> 1) * dest->u_stride;
-  dest->v += ((rows + 1) >> 1) * dest->v_stride;
-  dest->h -= rows;
-}
-
-static void JpegI411ToI420(void* opaque,
-                           const uint8* const* data,
-                           const int* strides,
-                           int rows) {
-  I420Buffers* dest = (I420Buffers*)(opaque);
-  I411ToI420(data[0], strides[0],
              data[1], strides[1],
              data[2], strides[2],
              dest->y, dest->y_stride,
@@ -192,17 +175,6 @@ int MJPGToI420(const uint8* sample,
                mjpeg_decoder.GetVertSampFactor(2) == 1 &&
                mjpeg_decoder.GetHorizSampFactor(2) == 1) {
       ret = mjpeg_decoder.DecodeToCallback(&JpegI444ToI420, &bufs, dw, dh);
-    // YUV411
-    } else if (mjpeg_decoder.GetColorSpace() ==
-                   MJpegDecoder::kColorSpaceYCbCr &&
-               mjpeg_decoder.GetNumComponents() == 3 &&
-               mjpeg_decoder.GetVertSampFactor(0) == 1 &&
-               mjpeg_decoder.GetHorizSampFactor(0) == 4 &&
-               mjpeg_decoder.GetVertSampFactor(1) == 1 &&
-               mjpeg_decoder.GetHorizSampFactor(1) == 1 &&
-               mjpeg_decoder.GetVertSampFactor(2) == 1 &&
-               mjpeg_decoder.GetHorizSampFactor(2) == 1) {
-      ret = mjpeg_decoder.DecodeToCallback(&JpegI411ToI420, &bufs, dw, dh);
     // YUV400
     } else if (mjpeg_decoder.GetColorSpace() ==
                    MJpegDecoder::kColorSpaceGrayscale &&
@@ -212,7 +184,7 @@ int MJPGToI420(const uint8* sample,
       ret = mjpeg_decoder.DecodeToCallback(&JpegI400ToI420, &bufs, dw, dh);
     } else {
       // TODO(fbarchard): Implement conversion for any other colorspace/sample
-      // factors that occur in practice. 411 is supported by libjpeg
+      // factors that occur in practice.
       // ERROR: Unable to convert MJPEG frame because format is not supported
       mjpeg_decoder.UnloadFrame();
       return 1;
@@ -263,20 +235,6 @@ static void JpegI444ToARGB(void* opaque,
                            int rows) {
   ARGBBuffers* dest = (ARGBBuffers*)(opaque);
   I444ToARGB(data[0], strides[0],
-             data[1], strides[1],
-             data[2], strides[2],
-             dest->argb, dest->argb_stride,
-             dest->w, rows);
-  dest->argb += rows * dest->argb_stride;
-  dest->h -= rows;
-}
-
-static void JpegI411ToARGB(void* opaque,
-                           const uint8* const* data,
-                           const int* strides,
-                           int rows) {
-  ARGBBuffers* dest = (ARGBBuffers*)(opaque);
-  I411ToARGB(data[0], strides[0],
              data[1], strides[1],
              data[2], strides[2],
              dest->argb, dest->argb_stride,
@@ -354,17 +312,6 @@ int MJPGToARGB(const uint8* sample,
                mjpeg_decoder.GetVertSampFactor(2) == 1 &&
                mjpeg_decoder.GetHorizSampFactor(2) == 1) {
       ret = mjpeg_decoder.DecodeToCallback(&JpegI444ToARGB, &bufs, dw, dh);
-    // YUV411
-    } else if (mjpeg_decoder.GetColorSpace() ==
-                   MJpegDecoder::kColorSpaceYCbCr &&
-               mjpeg_decoder.GetNumComponents() == 3 &&
-               mjpeg_decoder.GetVertSampFactor(0) == 1 &&
-               mjpeg_decoder.GetHorizSampFactor(0) == 4 &&
-               mjpeg_decoder.GetVertSampFactor(1) == 1 &&
-               mjpeg_decoder.GetHorizSampFactor(1) == 1 &&
-               mjpeg_decoder.GetVertSampFactor(2) == 1 &&
-               mjpeg_decoder.GetHorizSampFactor(2) == 1) {
-      ret = mjpeg_decoder.DecodeToCallback(&JpegI411ToARGB, &bufs, dw, dh);
     // YUV400
     } else if (mjpeg_decoder.GetColorSpace() ==
                    MJpegDecoder::kColorSpaceGrayscale &&
@@ -374,7 +321,7 @@ int MJPGToARGB(const uint8* sample,
       ret = mjpeg_decoder.DecodeToCallback(&JpegI400ToARGB, &bufs, dw, dh);
     } else {
       // TODO(fbarchard): Implement conversion for any other colorspace/sample
-      // factors that occur in practice. 411 is supported by libjpeg
+      // factors that occur in practice.
       // ERROR: Unable to convert MJPEG frame because format is not supported
       mjpeg_decoder.UnloadFrame();
       return 1;
